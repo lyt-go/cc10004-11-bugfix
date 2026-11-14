@@ -1,6 +1,18 @@
 import { MODULE_BY_KEY } from '@/data/modules'
-import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { allRows, listRows, readRowsFromStorage, resetRows, saveAllRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import {
+  diagnosePath,
+  CONVERSION_KEY,
+  EVENTDEF_KEY,
+  USERPATH_KEY,
+  type PathDiagnosis,
+} from '@/domain/path-diagnosis'
+import {
+  transitionConversion,
+  transitionGeneric,
+  transitionPath,
+} from '@/domain/path-workflow'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -28,32 +40,98 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
+/**
+ * 路径诊断：列表和详情共用这一份，保证「可确认」的判断与步骤明细来源一致。
+ * 读取时基于存储里的最新数据，避免页面拿着旧缓存放过已归档的漏斗。
+ */
+export function listPathDiagnoses(filters: Record<string, string> = {}): PathDiagnosis[] {
+  const stored = readRowsFromStorage()
+  const matched = filterRows(stored[USERPATH_KEY] ?? [], filters)
+  return matched.map((row) =>
+    diagnosePath(row, {
+      funnelRows: stored[CONVERSION_KEY] ?? [],
+      eventRows: stored[EVENTDEF_KEY] ?? [],
+    }),
+  )
+}
+
+export function getPathDiagnosis(id: number): PathDiagnosis | null {
+  const stored = readRowsFromStorage()
+  const row = (stored[USERPATH_KEY] ?? []).find((item) => Number(item.id) === id)
+  if (!row) {
+    return null
+  }
+  return diagnosePath(row, {
+    funnelRows: stored[CONVERSION_KEY] ?? [],
+    eventRows: stored[EVENTDEF_KEY] ?? [],
+  })
+}
+
+function negativeAction(action: string): boolean {
+  return NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb))
+}
+
+/**
+ * 动作入口：先按存储的最新数据重新校验，再在同一个快照上完成所有写入，
+ * 一次性落盘；任何一步校验或明细写入失败都不会留下半成品。
+ */
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
   }
-  const rows = listRows(key)
-  const index = rows.findIndex((row) => Number(row.id) === id)
-  if (index < 0) {
-    return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
+  const stored = readRowsFromStorage()
+  const rows: Record<string, EntryRow[]> = {
+    ...stored,
+    [key]: [...(stored[key] ?? [])].map((row) => ({ ...row })),
   }
-  const current = String(rows[index].status)
-  if (current === target) {
-    return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
+
+  let outcome: ReturnType<typeof transitionGeneric>
+  try {
+    if (key === CONVERSION_KEY) {
+      outcome = transitionConversion(rows, id, action, stored) ?? {
+        result: { ok: false, message: `转化定义没有登记「${action}」这个动作` },
+        commit: false,
+      }
+    } else if (key === USERPATH_KEY) {
+      outcome = transitionPath(rows, id, action) ?? {
+        result: { ok: false, message: `路径模式没有登记「${action}」这个动作` },
+        commit: false,
+      }
+    } else {
+      outcome = transitionGeneric(
+        rows,
+        key,
+        id,
+        action,
+        target,
+        meta.statuses,
+        meta.entity,
+        negativeAction(action),
+      )
+    }
+  } catch (error) {
+    // 校验异常视为写入失败：不落盘，内存与存储都保持原样。
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : `${meta.entity}${action}失败，未写入任何变更`,
+    }
   }
-  const lastStatus = meta.statuses[meta.statuses.length - 1]
-  const updated: EntryRow = {
-    ...rows[index],
-    status: target,
-    pending: target !== lastStatus,
-    abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
+
+  if (outcome.commit) {
+    try {
+      saveAllRows(rows)
+    } catch (error) {
+      return {
+        ok: false,
+        message: `${outcome.result.message}；写入失败：${
+          error instanceof Error ? error.message : '本地存储不可用'
+        }，未产生变更`,
+      }
+    }
   }
-  const next = [...rows]
-  next[index] = updated
-  saveRows(key, next)
-  return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+  return outcome.result
 }
 
 export function resetModule(key: string): PageResult {
@@ -68,7 +146,7 @@ export function exportEntries(key: string): { filename: string; content: string 
   for (const row of listRows(key)) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
-  return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
+  return { filename: `${meta.name}-清单.csv`, content: `﻿${lines.join('\n')}` }
 }
 
 export function downloadEntries(key: string): void {

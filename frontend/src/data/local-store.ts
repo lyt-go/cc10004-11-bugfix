@@ -36,6 +36,26 @@ export function allRows(): Record<string, EntryRow[]> {
   return cache
 }
 
+/**
+ * 绕过内存缓存的读取：确认/归档这类需要「先校验、后落盘」的动作用它重新取数，
+ * 避免两个请求各自基于旧快照通过校验。只读，不回写缓存。
+ */
+export function readRowsFromStorage(): Record<string, EntryRow[]> {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return clone(SEED_ROWS)
+  }
+  const raw = window.localStorage.getItem(STORAGE_KEY)
+  if (!raw) {
+    return clone(SEED_ROWS)
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, EntryRow[]>
+    return { ...clone(SEED_ROWS), ...parsed }
+  } catch {
+    return clone(SEED_ROWS)
+  }
+}
+
 export function listRows(key: string): EntryRow[] {
   return allRows()[key] ?? []
 }
@@ -46,6 +66,19 @@ export function saveRows(key: string, rows: EntryRow[]): void {
   if (typeof window !== 'undefined' && window.localStorage) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   }
+}
+
+/**
+ * 一次性写入多个集合。
+ *
+ * 路径确认会同时更新路径行、路径版本快照和复核记录，必须作为一个整体落盘：
+ * localStorage 写成功之后才替换内存缓存，写失败时缓存保持原样，不会留下半成品。
+ */
+export function saveAllRows(next: Record<string, EntryRow[]>): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  }
+  cache = next
 }
 
 export function resetRows(key: string): EntryRow[] {

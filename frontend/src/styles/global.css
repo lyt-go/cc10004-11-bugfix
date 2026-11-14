@@ -35,3 +35,16 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .error-text { color: #b42318; }
 .status-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
 .legend-item { background: #eef2f7; border-radius: 999px; padding: 2px 10px; }
+.detail-panel { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-top: 16px; }
+.detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.detail-head h3 { margin: 0; font-size: 15px; }
+.detail-table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; }
+.detail-table th, .detail-table td { border: 1px solid var(--border); padding: 6px 10px; font-size: 13px; text-align: left; }
+.detail-line { font-size: 13px; margin: 4px 0; }
+.detail-list { font-size: 13px; margin: 4px 0 12px; padding-left: 20px; }
+.row-invalid td { background: #fff5f4; }
+.row-selected td { background: #f1f6ff; }
+.link:disabled { color: var(--muted); cursor: not-allowed; }
+.tag-ok { color: #05603a; background: #e9f7ef; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+.tag-stop { color: #b42318; background: #fef3f2; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+.notice-text { color: #8a5a00; font-size: 13px; }
